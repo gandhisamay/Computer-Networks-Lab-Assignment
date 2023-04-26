@@ -13,6 +13,8 @@
 #define PORT_NUMBER 4000
 #define BUFLEN 48
 #define EXIT 0
+// the probability with which the packets will be dropped is defined here.
+// Change this value to get the value of your choice.
 #define PDR 0.1
 
 typedef enum { DATA, ACK } type;
@@ -22,9 +24,13 @@ typedef struct {
   int seq_no;
   type type;
   char payload[BUFLEN];
+  // this field helps in identifying what type of data is being sent whether it
+  // is a NAME or ID being sent.
   data_type data_type;
 } Packet;
 
+// function to generate the boolean whether to drop the current packet or not
+// based on PDR.
 bool drop_packet() {
   srand(time(NULL));
   int num = ((double)rand() / RAND_MAX) * 10 + (int)1;
@@ -35,10 +41,12 @@ bool drop_packet() {
   return false;
 }
 
+// function to log the packet details based on the packet type.
 void log_packet(Packet packet, char *action) {
   if (strcmp(action, "DROP PKT") == 0) {
-    printf("%s: Seq no. = %d bytes Type: %s word: %s\n", action, packet.seq_no,
-           packet.data_type == NAME ? "NAME" : "ID", packet.payload);
+    printf("%s: Seq no. = %d bytes Type = %s Payload = %s\n", action,
+           packet.seq_no, packet.data_type == NAME ? "NAME" : "ID",
+           packet.payload);
   } else if (packet.type == DATA) {
     printf("%s: Seq no. = %d Size = %d Type: %s word: %s\n", action,
            packet.seq_no, packet.size, packet.data_type == NAME ? "NAME" : "ID",
@@ -49,6 +57,7 @@ void log_packet(Packet packet, char *action) {
   }
 }
 
+// function to change the state of server depending of the various conditions.
 int get_next_state(int prev_state, bool client1_fin, bool client2_fin) {
   if (client1_fin && client2_fin) {
     return 4;
@@ -121,9 +130,6 @@ int main() {
   printf("CLIENT 1 SOCKET: %d CLIENT 2 SOCKET: %d\n", client1Socket,
          client2Socket);
 
-  // first will receive name and then id and then name.
-
-  // Accept is a blocking system call.
   int state = 0;
   Packet data_pkt;
   Packet ack_pkt;
@@ -165,6 +171,7 @@ int main() {
   printf("\n\n-------- BEGINNING TRANSFER ---------\n\n");
   printf("\n\n-------- TRANSFER LOGS ---------\n\n");
 
+  // switch state for 4 states of FSM
   while (1) {
 
     switch (state) {
@@ -279,6 +286,8 @@ int main() {
       break;
 
     case 4:
+      fseek(fp, -1, SEEK_END);
+      fputc('.', fp);
       fclose(fp);
       close(serverSocket);
       return 0;

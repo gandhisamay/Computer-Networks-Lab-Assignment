@@ -19,6 +19,8 @@ typedef struct {
   int seq_no;
   type type;
   char payload[BUFLEN];
+  // this field helps in identifying what type of data is being sent whether it
+  // is a NAME or ID being sent.
   data_type data_type;
 } Packet;
 int fd;
@@ -41,21 +43,19 @@ char *get_next_word(FILE *fp) {
 
   buf[i] = '\0';
 
-  // printf("word: %s\n", buf);
   return buf;
 }
 
 void log_packet(Packet packet, char *action) {
   if (packet.type == DATA) {
-    printf("%s: Seq no. = %d Size = %d bytes\n", action, packet.seq_no,
-           packet.size);
+    printf("%s: Seq no. = %d Size = %d bytes Payload = %s\n", action,
+           packet.seq_no, packet.size, packet.payload);
   } else {
     printf("%s: Seq no. = %d bytes\n", action, packet.seq_no);
   }
 }
 
 void send_pkt() {
-  // now for each and every character from the file.
   int bytesSent = send(fd, &curr_pkt, sizeof(curr_pkt), 0);
 
   if (bytesSent != sizeof(curr_pkt)) {
@@ -71,13 +71,12 @@ void rcv_ack() {
 
     int ready;
     Packet ack_pkt;
-    // now its time to receive the ack packet.
     fd_set read_fds;
     FD_ZERO(&read_fds);
     FD_SET(fd, &read_fds);
 
     struct timeval timeout;
-    timeout.tv_sec = 2; // 5 seconds
+    timeout.tv_sec = 2;
     timeout.tv_usec = 0;
     ready = select(fd + 1, &read_fds, NULL, NULL, &timeout);
     if (ready == -1) {
@@ -95,7 +94,7 @@ void rcv_ack() {
       if (FD_ISSET(fd, &read_fds)) {
         int recv_len = recv(fd, &ack_pkt, sizeof(ack_pkt), 0);
         prev_pkt = curr_pkt;
-        log_packet(curr_pkt, "RCVD ACK");
+        log_packet(ack_pkt, "RCVD ACK");
         break;
       }
     }
@@ -109,8 +108,6 @@ int main() {
     exit(EXIT);
   }
 
-  // now the fd for socket is allocated we can start the chutiyapa now.
-  //
   struct sockaddr_in serverAddr;
 
   memset(&serverAddr, 0, sizeof(serverAddr));
@@ -148,7 +145,6 @@ int main() {
   while (1) {
     char *word = get_next_word(fp);
     if (word == NULL) {
-      // time to send the find packet.
       Packet fin;
       fin.size = sizeof(fin);
       fin.seq_no = prev_pkt.seq_no;
