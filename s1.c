@@ -14,13 +14,13 @@
 #define EXIT 0
 
 typedef enum { DATA, ACK, FIN } type;
-typedef enum { ONE, TWO } client_id;
+typedef enum { NAME, ID, NA } data_type;
 typedef struct {
   int size;
   int seq_no;
   type type;
   char payload[BUFLEN];
-  client_id client;
+  data_type data_type;
 } Packet;
 
 void log_packet(Packet packet) {
@@ -30,7 +30,9 @@ void log_packet(Packet packet) {
                                             : "ACK");
   printf("Size: %d\n", packet.size);
   printf("Seq no: %d\n", packet.seq_no);
-  printf("Client: %s\n", packet.client == ONE ? "ONE" : "TWO");
+  printf("Client: %s\n", packet.data_type == NAME ? "NAME"
+                         : packet.data_type == ID ? "ID"
+                                                  : "NA");
 }
 
 int get_next_state(int prev_state, bool client1_fin, bool client2_fin) {
@@ -127,21 +129,45 @@ int main() {
   ack_pkt.type = ACK;
 
   FILE *fp = fopen("list.txt", "w+");
+
+  bytesSent =
+      recv(client1Socket, &prev_client1_pkt, sizeof(prev_client1_pkt), 0);
+
+  bytesSent =
+      recv(client2Socket, &prev_client2_pkt, sizeof(prev_client2_pkt), 0);
+
+  int name_socket;
+  int id_socket;
+
+  log_packet(prev_client1_pkt);
+  log_packet(prev_client2_pkt);
+
+  printf("-------- INITIAL SETUP PACKETS RECEIVED---------\n\n");
+  if (prev_client1_pkt.data_type == NAME) {
+    name_socket = client1Socket;
+    id_socket = client2Socket;
+  } else {
+    name_socket = client2Socket;
+    id_socket = client1Socket;
+  }
+
   while (1) {
 
     switch (state) {
     case 0:
       while (true) {
         printf("case 0\n");
-        bytesRcvd = recv(client1Socket, &data_pkt, sizeof(data_pkt), 0);
+        bytesRcvd = recv(name_socket, &data_pkt, sizeof(data_pkt), 0);
         if (bytesRcvd < 0) {
           printf("ERROR: failed to receive data from client 1\n");
           exit(EXIT);
         }
 
+        sleep(1);
+
         if (prev_client1_pkt.seq_no + prev_client1_pkt.size ==
                 data_pkt.seq_no &&
-            data_pkt.client == ONE) {
+            data_pkt.data_type == NAME) {
           break;
         }
 
@@ -165,7 +191,7 @@ int main() {
 
       printf("case 1\n");
       // send ack
-      bytesSent = send(client1Socket, &ack_pkt, sizeof(ack_pkt), 0);
+      bytesSent = send(name_socket, &ack_pkt, sizeof(ack_pkt), 0);
       if (bytesSent < sizeof(ack_pkt)) {
         printf("ERROR: failed to send ack to client 1\n");
         exit(EXIT);
@@ -182,7 +208,7 @@ int main() {
     case 2:
       while (true) {
         printf("case 2\n");
-        bytesRcvd = recv(client2Socket, &data_pkt, sizeof(data_pkt), 0);
+        bytesRcvd = recv(id_socket, &data_pkt, sizeof(data_pkt), 0);
         if (bytesRcvd < 0) {
           printf("ERROR: failed to receive data from client 1\n");
           exit(EXIT);
@@ -190,7 +216,7 @@ int main() {
 
         if (prev_client2_pkt.seq_no + prev_client2_pkt.size ==
                 data_pkt.seq_no &&
-            data_pkt.client == TWO) {
+            data_pkt.data_type == ID) {
           break;
         }
 
@@ -212,7 +238,7 @@ int main() {
 
     case 3:
       printf("case 3\n");
-      bytesSent = send(client2Socket, &ack_pkt, sizeof(ack_pkt), 0);
+      bytesSent = send(id_socket, &ack_pkt, sizeof(ack_pkt), 0);
       if (bytesSent < sizeof(ack_pkt)) {
         printf("ERROR: failed to send ack to client 2\n");
         exit(EXIT);

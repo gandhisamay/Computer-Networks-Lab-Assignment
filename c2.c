@@ -13,13 +13,13 @@
 
 // packet struct.
 typedef enum { DATA, ACK, FIN } type;
-typedef enum { ONE, TWO } client_id;
+typedef enum { NAME, ID, NA } data_type;
 typedef struct {
   int size;
   int seq_no;
   type type;
   char payload[BUFLEN];
-  client_id client;
+  data_type data_type;
 } Packet;
 int fd;
 Packet curr_pkt, prev_pkt;
@@ -126,6 +126,13 @@ int main() {
     exit(EXIT);
   }
 
+  prev_pkt.seq_no = 0;
+  prev_pkt.size = 0;
+  prev_pkt.data_type = ID;
+
+  int recv_len = send(fd, &prev_pkt, sizeof(prev_pkt), 0);
+  printf("syn received\n");
+
   while (1) {
     char *word = get_next_word(fp);
     if (word == NULL) {
@@ -134,7 +141,7 @@ int main() {
       fin.size = sizeof(fin);
       fin.seq_no = prev_pkt.seq_no + prev_pkt.size;
       fin.type = FIN;
-      fin.client = TWO;
+      fin.data_type = ID;
       curr_pkt = fin;
       send_pkt();
       rcv_ack();
@@ -145,7 +152,7 @@ int main() {
     curr_pkt.type = DATA;
     curr_pkt.seq_no = prev_pkt.seq_no + prev_pkt.size;
     curr_pkt.size = sizeof(curr_pkt);
-    curr_pkt.client = TWO;
+    curr_pkt.data_type = ID;
     strcpy(curr_pkt.payload, word);
 
     send_pkt();
