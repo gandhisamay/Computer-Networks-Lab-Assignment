@@ -5,15 +5,17 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
 
 #define MAXPENDING 5
 #define BUFFERSIZE 32
 #define PORT_NUMBER 4000
-#define BUFLEN 512
+#define BUFLEN 48
 #define EXIT 0
+#define PDR 0.1
 
-typedef enum { DATA, ACK, FIN } type;
+typedef enum { DATA, ACK } type;
 typedef enum { NAME, ID, NA } data_type;
 typedef struct {
   int size;
@@ -23,16 +25,28 @@ typedef struct {
   data_type data_type;
 } Packet;
 
-void log_packet(Packet packet) {
-  printf("Payload: %s\n", packet.payload);
-  printf("Type: %s\n", packet.type == DATA  ? "DATA"
-                       : packet.type == FIN ? "FIN"
-                                            : "ACK");
-  printf("Size: %d\n", packet.size);
-  printf("Seq no: %d\n", packet.seq_no);
-  printf("Client: %s\n", packet.data_type == NAME ? "NAME"
-                         : packet.data_type == ID ? "ID"
-                                                  : "NA");
+bool drop_packet() {
+  srand(time(NULL));
+  int num = ((double)rand() / RAND_MAX) * 10 + (int)1;
+
+  if (num <= (int)((double)10 * PDR)) {
+    return true;
+  }
+  return false;
+}
+
+void log_packet(Packet packet, char *action) {
+  if (strcmp(action, "DROP PKT") == 0) {
+    printf("%s: Seq no. = %d bytes Type: %s word: %s\n", action, packet.seq_no,
+           packet.data_type == NAME ? "NAME" : "ID", packet.payload);
+  } else if (packet.type == DATA) {
+    printf("%s: Seq no. = %d Size = %d Type: %s word: %s\n", action,
+           packet.seq_no, packet.size, packet.data_type == NAME ? "NAME" : "ID",
+           packet.payload);
+  } else if (packet.type == ACK) {
+    printf("%s: Seq no. = %d bytes Type: %s\n", action, packet.seq_no,
+           packet.data_type == NAME ? "NAME" : "ID");
+  }
 }
 
 int get_next_state(int prev_state, bool client1_fin, bool client2_fin) {
@@ -139,10 +153,7 @@ int main() {
   int name_socket;
   int id_socket;
 
-  log_packet(prev_client1_pkt);
-  log_packet(prev_client2_pkt);
-
-  printf("-------- INITIAL SETUP PACKETS RECEIVED---------\n\n");
+  printf("\n\n-------- CONNECTION SUCESSFULL WITH BOTH CLIENTS ---------\n\n");
   if (prev_client1_pkt.data_type == NAME) {
     name_socket = client1Socket;
     id_socket = client2Socket;
@@ -151,12 +162,15 @@ int main() {
     id_socket = client1Socket;
   }
 
+  printf("\n\n-------- BEGINNING TRANSFER ---------\n\n");
+  printf("\n\n-------- TRANSFER LOGS ---------\n\n");
+
   while (1) {
 
     switch (state) {
     case 0:
       while (true) {
-        printf("case 0\n");
+        // printf("case 0\n");
         bytesRcvd = recv(name_socket, &data_pkt, sizeof(data_pkt), 0);
         if (bytesRcvd < 0) {
           printf("ERROR: failed to receive data from client 1\n");
@@ -165,88 +179,101 @@ int main() {
 
         sleep(1);
 
-        if (prev_client1_pkt.seq_no + prev_client1_pkt.size ==
-                data_pkt.seq_no &&
-            data_pkt.data_type == NAME) {
+        bool drop = drop_packet();
+
+        if ((!drop &&
+             prev_client1_pkt.seq_no + strlen(prev_client1_pkt.payload) ==
+                 data_pkt.seq_no &&
+             data_pkt.data_type == NAME) ||
+            strcmp(data_pkt.payload, "FIN") == 0) {
           break;
         }
 
-        printf("-------- Package discarded --------\n\n");
-
-        log_packet(data_pkt);
-
-        printf("\n");
+        log_packet(data_pkt, "DROP PKT");
       }
 
       prev_client1_pkt = data_pkt;
-      if (data_pkt.type != FIN) {
+      if (strcmp(data_pkt.payload, "FIN") != 0) {
         fprintf(fp, "%s,", data_pkt.payload);
+        log_packet(data_pkt, "RCVD PKT");
       }
-      log_packet(data_pkt);
 
       state = get_next_state(state, client1_fin, client2_fin);
       break;
 
     case 1:
 
-      printf("case 1\n");
-      // send ack
+      // printf("case 1\n");
+      ack_pkt.type = ACK;
+      ack_pkt.size = sizeof(ack_pkt);
+      ack_pkt.seq_no = data_pkt.seq_no;
+      ack_pkt.data_type = NAME;
+
       bytesSent = send(name_socket, &ack_pkt, sizeof(ack_pkt), 0);
       if (bytesSent < sizeof(ack_pkt)) {
         printf("ERROR: failed to send ack to client 1\n");
         exit(EXIT);
       }
-      if (data_pkt.type == FIN) {
+      if (strcmp(data_pkt.payload, "FIN") == 0) {
         close(client1Socket);
         client1_fin = true;
+      } else {
+        log_packet(ack_pkt, "SENT ACK");
       }
-      printf("ACK sent to client 1 from server\n\n");
+
+      // printf("ACK sent to client 1 from server\n\n");
       state = get_next_state(state, client1_fin, client2_fin);
 
       break;
 
     case 2:
       while (true) {
-        printf("case 2\n");
+        // printf("case 2\n");
         bytesRcvd = recv(id_socket, &data_pkt, sizeof(data_pkt), 0);
         if (bytesRcvd < 0) {
           printf("ERROR: failed to receive data from client 1\n");
           exit(EXIT);
         }
 
-        if (prev_client2_pkt.seq_no + prev_client2_pkt.size ==
-                data_pkt.seq_no &&
-            data_pkt.data_type == ID) {
+        bool drop = drop_packet();
+
+        if ((!drop &&
+             prev_client2_pkt.seq_no + strlen(prev_client2_pkt.payload) ==
+                 data_pkt.seq_no &&
+             data_pkt.data_type == ID) ||
+            strcmp(data_pkt.payload, "FIN") == 0) {
           break;
         }
 
-        printf("-------- Package discarded --------\n\n");
-        log_packet(data_pkt);
-
-        printf("\n");
+        log_packet(data_pkt, "DROP PKT");
       }
 
       prev_client2_pkt = data_pkt;
 
-      if (data_pkt.type != FIN) {
+      if (strcmp(data_pkt.payload, "FIN") != 0) {
         fprintf(fp, "%s,", data_pkt.payload);
+        log_packet(data_pkt, "RCVD PKT");
       }
 
-      log_packet(data_pkt);
       state = get_next_state(state, client1_fin, client2_fin);
       break;
 
     case 3:
-      printf("case 3\n");
+      ack_pkt.type = ACK;
+      ack_pkt.size = sizeof(ack_pkt);
+      ack_pkt.seq_no = data_pkt.seq_no;
+      ack_pkt.data_type = ID;
+
       bytesSent = send(id_socket, &ack_pkt, sizeof(ack_pkt), 0);
       if (bytesSent < sizeof(ack_pkt)) {
         printf("ERROR: failed to send ack to client 2\n");
         exit(EXIT);
       }
-      printf("ACK sent to client 2 from server\n\n");
-      if (data_pkt.type == FIN) {
+      if (strcmp(data_pkt.payload, "FIN") == 0) {
         close(client2Socket);
         client2_fin = true;
+      } else {
+        log_packet(ack_pkt, "SENT ACK");
       }
       state = get_next_state(state, client1_fin, client2_fin);
       break;

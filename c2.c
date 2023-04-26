@@ -6,13 +6,13 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#define BUFLEN 512
+#define BUFLEN 48
 #define PORT_NUMBER 4000
 #define EXIT 0
 #define BEGIN_SEQ_MAX 4096
 
 // packet struct.
-typedef enum { DATA, ACK, FIN } type;
+typedef enum { DATA, ACK } type;
 typedef enum { NAME, ID, NA } data_type;
 typedef struct {
   int size;
@@ -41,8 +41,17 @@ char *get_next_word(FILE *fp) {
 
   buf[i] = '\0';
 
-  printf("word: %s\n", buf);
+  // printf("word: %s\n", buf);
   return buf;
+}
+
+void log_packet(Packet packet, char *action) {
+  if (packet.type == DATA) {
+    printf("%s: Seq no. = %d Size = %d bytes\n", action, packet.seq_no,
+           packet.size);
+  } else {
+    printf("%s: Seq no. = %d bytes\n", action, packet.seq_no);
+  }
 }
 
 void send_pkt() {
@@ -53,6 +62,8 @@ void send_pkt() {
     printf("ERROR - Couldn't send the id packet. Bytes sent: %d\n", bytesSent);
     exit(EXIT);
   }
+
+  log_packet(curr_pkt, "SEND PKT");
 }
 
 void rcv_ack() {
@@ -72,17 +83,19 @@ void rcv_ack() {
     if (ready == -1) {
       perror("select");
     } else if (ready == 0) {
-      printf("Timeout occurred, resending packet.\n");
       int bytesSent = send(fd, &curr_pkt, sizeof(curr_pkt), 0);
       if (bytesSent != sizeof(curr_pkt)) {
         printf("ERROR - Couldn't send the id packet. Bytes sent: %d\n",
                bytesSent);
         exit(EXIT);
       }
+
+      log_packet(curr_pkt, "RE-TRANSMIT PKT");
     } else {
       if (FD_ISSET(fd, &read_fds)) {
         int recv_len = recv(fd, &ack_pkt, sizeof(ack_pkt), 0);
         prev_pkt = curr_pkt;
+        log_packet(curr_pkt, "RCVD ACK");
         break;
       }
     }
@@ -131,7 +144,6 @@ int main() {
   prev_pkt.data_type = ID;
 
   int recv_len = send(fd, &prev_pkt, sizeof(prev_pkt), 0);
-  printf("syn received\n");
 
   while (1) {
     char *word = get_next_word(fp);
@@ -139,9 +151,10 @@ int main() {
       // time to send the find packet.
       Packet fin;
       fin.size = sizeof(fin);
-      fin.seq_no = prev_pkt.seq_no + prev_pkt.size;
-      fin.type = FIN;
+      fin.seq_no = prev_pkt.seq_no;
+      strcpy(fin.payload, "FIN");
       fin.data_type = ID;
+      fin.type = DATA;
       curr_pkt = fin;
       send_pkt();
       rcv_ack();
@@ -150,14 +163,13 @@ int main() {
     }
 
     curr_pkt.type = DATA;
-    curr_pkt.seq_no = prev_pkt.seq_no + prev_pkt.size;
+    curr_pkt.seq_no = prev_pkt.seq_no + strlen(curr_pkt.payload);
     curr_pkt.size = sizeof(curr_pkt);
     curr_pkt.data_type = ID;
     strcpy(curr_pkt.payload, word);
 
     send_pkt();
     rcv_ack();
-    printf("Packet sent successfully\n\n");
   }
 
   fclose(fp);
