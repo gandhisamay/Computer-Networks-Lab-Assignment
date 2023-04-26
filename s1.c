@@ -15,7 +15,7 @@
 #define EXIT 0
 // the probability with which the packets will be dropped is defined here.
 // Change this value to get the value of your choice.
-#define PDR 0.1
+#define PDR 0
 
 typedef enum { DATA, ACK } type;
 typedef enum { NAME, ID, NA } data_type;
@@ -59,22 +59,36 @@ void log_packet(Packet packet, char *action) {
 
 // function to change the state of server depending of the various conditions.
 int get_next_state(int prev_state, bool client1_fin, bool client2_fin) {
-  if (client1_fin && client2_fin) {
-    return 4;
-  } else if (prev_state == 2) {
-    return 3;
-  } else if (client1_fin && prev_state == 3) {
-    return 2;
-  } else if (prev_state == 0) {
-    return 1;
-  } else if (client2_fin && prev_state == 1) {
-    return 0;
-  } else if (!client1_fin && !client2_fin) {
+  if (!client1_fin && !client2_fin) {
+    if (prev_state == 0)
+      return 1;
     if (prev_state == 1)
       return 2;
-    else if (prev_state == 3)
+    if (prev_state == 2)
+      return 3;
+    if (prev_state == 3)
+      return 0;
+  } else if (!client2_fin) {
+    if (prev_state == 0)
+      return 1;
+    if (prev_state == 1)
+      return 2;
+    if (prev_state == 2)
+      return 3;
+    if (prev_state == 3)
+      return 2;
+  } else if (!client1_fin) {
+    if (prev_state == 0)
+      return 1;
+    if (prev_state == 1)
+      return 0;
+    if (prev_state == 2)
+      return 3;
+    if (prev_state == 3)
       return 0;
   }
+
+  printf("NO CASE MATCHED \n");
   return 4;
 }
 
@@ -176,27 +190,47 @@ int main() {
 
     switch (state) {
     case 0:
+      printf("case 0\n");
       while (true) {
-        // printf("case 0\n");
+        // printf("case 2\n");
         bytesRcvd = recv(name_socket, &data_pkt, sizeof(data_pkt), 0);
         if (bytesRcvd < 0) {
           printf("ERROR: failed to receive data from client 1\n");
           exit(EXIT);
         }
 
-        sleep(1);
+        log_packet(data_pkt, "INCOMING DATA PACKET");
 
         bool drop = drop_packet();
 
-        if ((!drop &&
-             prev_client1_pkt.seq_no + strlen(prev_client1_pkt.payload) ==
-                 data_pkt.seq_no &&
-             data_pkt.data_type == NAME) ||
-            strcmp(data_pkt.payload, "FIN") == 0) {
+        if (drop) {
+          log_packet(data_pkt, "DROP PKT (Channel loss)");
+        } else if (strcmp(data_pkt.payload, "FIN") == 0) {
           break;
-        }
+        } else if (prev_client1_pkt.seq_no + strlen(prev_client1_pkt.payload) ==
+                       data_pkt.seq_no &&
+                   data_pkt.data_type == NAME) {
+          break;
+        } else if (prev_client1_pkt.seq_no + strlen(prev_client1_pkt.payload) >
+                   data_pkt.seq_no) {
+          log_packet(data_pkt, "DROP PKT (Dup pkt)");
+          // need to send ack in this case.
+          ack_pkt.type = ACK;
+          ack_pkt.size = sizeof(ack_pkt);
+          ack_pkt.seq_no = data_pkt.seq_no;
+          ack_pkt.data_type = data_pkt.data_type;
+          int socket = data_pkt.data_type == NAME ? name_socket : id_socket;
 
-        log_packet(data_pkt, "DROP PKT");
+          bytesSent = send(socket, &ack_pkt, sizeof(ack_pkt), 0);
+          if (bytesSent < sizeof(ack_pkt)) {
+            printf("ERROR: failed to send ack to client 2\n");
+            exit(EXIT);
+          }
+
+          log_packet(ack_pkt, "SENT ACK");
+        } else {
+          printf("going into else case\n");
+        }
       }
 
       prev_client1_pkt = data_pkt;
@@ -210,7 +244,7 @@ int main() {
 
     case 1:
 
-      // printf("case 1\n");
+      printf("case 1\n");
       ack_pkt.type = ACK;
       ack_pkt.size = sizeof(ack_pkt);
       ack_pkt.seq_no = data_pkt.seq_no;
@@ -234,6 +268,7 @@ int main() {
       break;
 
     case 2:
+      printf("case 2\n");
       while (true) {
         // printf("case 2\n");
         bytesRcvd = recv(id_socket, &data_pkt, sizeof(data_pkt), 0);
@@ -242,17 +277,41 @@ int main() {
           exit(EXIT);
         }
 
+        log_packet(data_pkt, "INCOMING DATA PACKET");
+        printf("SEQ NO: %d LENGTH PAYLOAD: %d DATA SEQ NO: %d",
+               prev_client2_pkt.seq_no, strlen(prev_client2_pkt.payload),
+               data_pkt.seq_no);
+
         bool drop = drop_packet();
 
-        if ((!drop &&
-             prev_client2_pkt.seq_no + strlen(prev_client2_pkt.payload) ==
-                 data_pkt.seq_no &&
-             data_pkt.data_type == ID) ||
-            strcmp(data_pkt.payload, "FIN") == 0) {
+        if (drop) {
+          log_packet(data_pkt, "DROP PKT (Channel loss)");
+        } else if (strcmp(data_pkt.payload, "FIN") == 0) {
           break;
-        }
+        } else if (prev_client2_pkt.seq_no + strlen(prev_client2_pkt.payload) ==
+                       data_pkt.seq_no &&
+                   data_pkt.data_type == ID) {
+          break;
+        } else if (prev_client2_pkt.seq_no + strlen(prev_client2_pkt.payload) >
+                   data_pkt.seq_no) {
+          log_packet(data_pkt, "DROP PKT (Dup pkt)");
+          // need to send ack in this case.
+          ack_pkt.type = ACK;
+          ack_pkt.size = sizeof(ack_pkt);
+          ack_pkt.seq_no = data_pkt.seq_no;
+          ack_pkt.data_type = data_pkt.data_type;
 
-        log_packet(data_pkt, "DROP PKT");
+          int socket = data_pkt.data_type == NAME ? name_socket : id_socket;
+          bytesSent = send(socket, &ack_pkt, sizeof(ack_pkt), 0);
+          if (bytesSent < sizeof(ack_pkt)) {
+            printf("ERROR: failed to send ack to client 2\n");
+            exit(EXIT);
+          }
+
+          log_packet(ack_pkt, "SENT ACK");
+        } else {
+          printf("going here\n");
+        }
       }
 
       prev_client2_pkt = data_pkt;
@@ -266,6 +325,7 @@ int main() {
       break;
 
     case 3:
+      printf("case 3\n");
       ack_pkt.type = ACK;
       ack_pkt.size = sizeof(ack_pkt);
       ack_pkt.seq_no = data_pkt.seq_no;

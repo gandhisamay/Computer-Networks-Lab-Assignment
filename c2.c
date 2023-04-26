@@ -1,15 +1,18 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
 
 #define BUFLEN 48
 #define PORT_NUMBER 4000
 #define EXIT 0
 #define BEGIN_SEQ_MAX 4096
+#define PDR 0.8
 
 // packet struct.
 typedef enum { DATA, ACK } type;
@@ -25,6 +28,16 @@ typedef struct {
 } Packet;
 int fd;
 Packet curr_pkt, prev_pkt;
+
+bool drop_packet() {
+  srand(time(NULL));
+  int num = ((double)rand() / RAND_MAX) * 10 + (int)1;
+
+  if (num <= (int)((double)10 * PDR)) {
+    return true;
+  }
+  return false;
+}
 
 char *get_next_word(FILE *fp) {
   char *buf = (char *)malloc(BUFLEN * sizeof(char));
@@ -55,7 +68,7 @@ void log_packet(Packet packet, char *action) {
   }
 }
 
-void send_pkt() {
+void send_pkt(bool log) {
   int bytesSent = send(fd, &curr_pkt, sizeof(curr_pkt), 0);
 
   if (bytesSent != sizeof(curr_pkt)) {
@@ -63,10 +76,11 @@ void send_pkt() {
     exit(EXIT);
   }
 
-  log_packet(curr_pkt, "SEND PKT");
+  if (log)
+    log_packet(curr_pkt, "SEND PKT");
 }
 
-void rcv_ack() {
+void rcv_ack(bool log) {
   do {
 
     int ready;
@@ -93,9 +107,15 @@ void rcv_ack() {
     } else {
       if (FD_ISSET(fd, &read_fds)) {
         int recv_len = recv(fd, &ack_pkt, sizeof(ack_pkt), 0);
-        prev_pkt = curr_pkt;
-        log_packet(ack_pkt, "RCVD ACK");
-        break;
+
+        if (drop_packet() && log) {
+          log_packet(ack_pkt, "DROP PKT");
+        } else if (ack_pkt.seq_no == curr_pkt.seq_no) {
+          prev_pkt = curr_pkt;
+          if (log)
+            log_packet(ack_pkt, "RCVD ACK");
+          break;
+        }
       }
     }
   } while (1);
@@ -152,8 +172,8 @@ int main() {
       fin.data_type = ID;
       fin.type = DATA;
       curr_pkt = fin;
-      send_pkt();
-      rcv_ack();
+      send_pkt(false);
+      rcv_ack(false);
       printf(" --------  Connection ended with server ---------\n");
       break;
     }
@@ -164,8 +184,8 @@ int main() {
     curr_pkt.data_type = ID;
     strcpy(curr_pkt.payload, word);
 
-    send_pkt();
-    rcv_ack();
+    send_pkt(true);
+    rcv_ack(true);
   }
 
   fclose(fp);
